@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the declared floor in pyproject.toml; keep it here so a
+        # 3.10-only syntax slip cannot reach a release.
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest -q
+
+  quality:
+    name: Types and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: mypy (strict)
+        run: mypy
+
+      - name: ruff lint
+        run: ruff check .
+
+      - name: ruff format
+        run: ruff format --check .
+
+  # __version__ rides in the User-Agent, so it must not drift from pyproject.
+  versions:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pyproject.toml matches _version.py
+        run: |
+          python - <<'EOF'
+          import pathlib, re, sys, tomllib
+
+          manifest = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          constant = re.search(
+              r'__version__ = "([^"]+)"',
+              pathlib.Path("src/epay/_version.py").read_text(),
+          ).group(1)
+
+          print(f"manifest={manifest} constant={constant}")
+          if manifest != constant:
+              print(f"::error::_version.py says {constant} but pyproject.toml says {manifest}")
+              sys.exit(1)
+          EOF
+
+  package:
+    name: Package smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build twine
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      # Catches broken metadata before it reaches PyPI, where a filename can
+      # never be reused.
+      - name: Validate metadata
+        run: twine check --strict dist/*
+
+      - name: Install the wheel into a clean venv and import it
+        run: |
+          python -m venv "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/bin/pip" install --quiet dist/*.whl
+          "$RUNNER_TEMP/consumer/bin/python" -c "
+          import epay
+          from epay.integrations import asgi, django, flask
+          assert epay.Epay('sk_test_0123456789abcdef').is_sandbox
+          print('import ok:', epay.__version__)
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
