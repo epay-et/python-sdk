@@ -36,26 +36,26 @@ def test_the_client_rejects_out_of_range_options():
 
 def test_options_fall_back_to_environment_variables(monkeypatch):
     monkeypatch.setenv("EPAY_SECRET_KEY", "sk_test_from_env")
-    monkeypatch.setenv("EPAY_BASE_URL", "https://staging.e-pay.et/v1")
+    monkeypatch.setenv("EPAY_BASE_URL", "https://staging.epayethiopia.com/v1")
     monkeypatch.setenv("EPAY_WEBHOOK_SECRET", "whsec_from_env")
 
     with Epay() as epay:
         assert epay.is_sandbox
-        assert epay.base_url == "https://staging.e-pay.et/v1"
+        assert epay.base_url == "https://staging.epayethiopia.com/v1"
         assert epay.webhooks.configured
 
 
 def test_a_trailing_slash_does_not_double_up(monkeypatch):
     monkeypatch.delenv("EPAY_BASE_URL", raising=False)
-    with Epay("sk_test_a", base_url="https://api.e-pay.et/v1/") as epay:
-        assert epay.base_url == "https://api.e-pay.et/v1"
+    with Epay("sk_test_a", base_url="https://api.epayethiopia.com/v1/") as epay:
+        assert epay.base_url == "https://api.epayethiopia.com/v1"
 
 
 def test_base_url_defaults_to_the_documented_root(monkeypatch):
     monkeypatch.delenv("EPAY_BASE_URL", raising=False)
     with Epay("sk_test_a") as epay:
         assert epay.base_url == DEFAULT_BASE_URL
-    assert DEFAULT_BASE_URL == "https://api.e-pay.et/v1"
+    assert DEFAULT_BASE_URL == "https://api.epayethiopia.com/v1"
 
 
 def test_repr_never_leaks_the_api_key():

@@ -35,7 +35,7 @@ def test_initialize_posts_to_the_documented_path(client_factory):
     assert session == SESSION
     assert len(calls) == 1
     assert calls.calls[0].method == "POST"
-    assert str(calls.url()) == "https://api.e-pay.et/v1/transactions/initialize"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/initialize"
     assert calls.header("authorization") == "Bearer sk_test_0123456789abcdef"
     assert calls.header("content-type") == "application/json"
     assert calls.header("user-agent").startswith("epay-python/")
@@ -149,7 +149,9 @@ def test_verify_returns_the_receipt(client_factory):
 
     result = epay.payments.verify("PAB12CD3420260813")
 
-    assert str(calls.url()) == "https://api.e-pay.et/v1/transactions/PAB12CD3420260813/verify"
+    assert (
+        str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/PAB12CD3420260813/verify"
+    )
     assert result["serviceFee"] == "7.50"
     assert result["customer"]["name"] == "Abebe Bikila"
 
@@ -176,7 +178,9 @@ def test_cancel_resolves_on_204(client_factory):
 
     assert epay.payments.cancel("PAB12CD3420260813") is None
     assert calls.calls[0].method == "POST"
-    assert str(calls.url()) == "https://api.e-pay.et/v1/transactions/PAB12CD3420260813/cancel"
+    assert (
+        str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/PAB12CD3420260813/cancel"
+    )
 
 
 def test_cancel_is_never_retried(client_factory):
@@ -191,7 +195,7 @@ def test_cancel_is_never_retried(client_factory):
 def test_references_are_url_encoded(client_factory):
     epay, calls = client_factory([{"json": {}}])
     epay.transactions.retrieve("PAB 1/2")
-    assert str(calls.url()) == "https://api.e-pay.et/v1/transactions/PAB%201%2F2"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/PAB%201%2F2"
 
 
 def test_an_empty_reference_is_rejected_locally(client_factory):
@@ -365,7 +369,7 @@ def test_providers_are_unwrapped_from_the_envelope(client_factory):
 
     providers = epay.payment_providers.list()
 
-    assert str(calls.url()) == "https://api.e-pay.et/v1/payment-providers/list"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/payment-providers/list"
     assert providers[0]["providerCode"] == "telebirr"
 
 
@@ -397,7 +401,7 @@ def test_list_enabled_filters_out_disabled_providers(client_factory):
 
     enabled = epay.payment_providers.list_enabled()
 
-    assert str(calls.url()) == "https://api.e-pay.et/v1/payment-providers"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/payment-providers"
     assert [p["providerCode"] for p in enabled] == ["cbe_birr"]
 
 
@@ -524,7 +528,7 @@ def test_the_escape_hatch_reaches_unmodelled_endpoints(client_factory):
     data = epay.request("GET", "/some/future/endpoint", params={"limit": 10})
 
     assert data == {"ok": True}
-    assert str(calls.url()) == "https://api.e-pay.et/v1/some/future/endpoint?limit=10"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/some/future/endpoint?limit=10"
 
 
 def test_a_supplied_http_client_is_not_closed_by_the_sdk():

@@ -1,8 +1,10 @@
 # epay
 
-Official [ePay Business API](https://api.e-pay.et) client for Python.
+Official ePay Business API client for Python.
 
 Accept payments from every major Ethiopian mobile wallet and bank with one integration.
+
+Full API documentation: <https://docs.epayethiopia.com/>
 
 - **Sync and async clients** from one install, sharing one retry policy
 - **Fully typed**, with `py.typed` and `TypedDict` response shapes
@@ -67,7 +69,7 @@ manager, `close()`, or `await aclose()`.
 | --- | --- | --- |
 | `api_key` | `EPAY_SECRET_KEY` | *required* |
 | `webhook_secret` | `EPAY_WEBHOOK_SECRET` | — |
-| `base_url` | `EPAY_BASE_URL` | `https://api.e-pay.et/v1` |
+| `base_url` | `EPAY_BASE_URL` | `https://api.epayethiopia.com/v1` |
 | `timeout` | — | `30.0` seconds per attempt |
 | `max_retries` | — | `2` |
 | `default_headers` | — | `{}` |

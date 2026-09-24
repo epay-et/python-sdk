@@ -105,7 +105,7 @@ def async_client_factory():
 
 SESSION = {
     "reference": "PAB12CD3420260813",
-    "checkoutUrl": "https://checkout.e-pay.et/pay/PAB12CD3420260813",
+    "checkoutUrl": "https://checkout.epayethiopia.com/pay/PAB12CD3420260813",
     "status": "success",
     "expiresAt": "2026-08-13T12:30:00.000Z",
 }

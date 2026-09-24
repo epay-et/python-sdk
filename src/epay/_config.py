@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 #: Default API root.
-DEFAULT_BASE_URL = "https://api.e-pay.et/v1"
+DEFAULT_BASE_URL = "https://api.epayethiopia.com/v1"
 
 #: Default per-attempt timeout, in seconds.
 DEFAULT_TIMEOUT = 30.0

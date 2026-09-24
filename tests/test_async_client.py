@@ -57,8 +57,8 @@ async def test_verify_and_retrieve_hit_the_documented_paths(async_client_factory
     await epay.payments.verify("PAB1")
     await epay.transactions.retrieve("PAB1")
 
-    assert str(calls.url(0)) == "https://api.e-pay.et/v1/transactions/PAB1/verify"
-    assert str(calls.url(1)) == "https://api.e-pay.et/v1/transactions/PAB1"
+    assert str(calls.url(0)) == "https://api.epayethiopia.com/v1/transactions/PAB1/verify"
+    assert str(calls.url(1)) == "https://api.epayethiopia.com/v1/transactions/PAB1"
     await epay.aclose()
 
 
