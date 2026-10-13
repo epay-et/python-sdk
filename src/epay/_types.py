@@ -21,6 +21,9 @@ __all__ = [
     "CANCELLABLE_STATUSES",
     "WEBHOOK_EVENT_TYPES",
     "InitializedPayment",
+    "DirectPayment",
+    "SmsLink",
+    "Receipt",
     "Transaction",
     "TransactionCustomer",
     "VerifiedPayment",
@@ -28,6 +31,7 @@ __all__ = [
     "TimelineEvent",
     "TransactionTimeline",
     "PaymentProviderItem",
+    "PaymentProviderFlow",
     "PaymentProvider",
     "WebhookEvent",
 ]
@@ -92,6 +96,35 @@ class InitializedPayment(TypedDict):
     expiresAt: str
 
 
+class DirectPayment(TypedDict):
+    """Response of ``POST /v1/transactions/direct``.
+
+    ``status`` is always ``pending``: the outcome arrives by webhook once the
+    customer authorizes on their phone. ``attempt`` holds provider-specific
+    session data whose shape varies by provider.
+    """
+
+    reference: str
+    status: TransactionStatus
+    chargeAmount: str
+    feeAmount: str
+    attempt: Dict[str, Any]
+
+
+class SmsLink(TypedDict):
+    """Response of ``POST /v1/transactions/sms-link``.
+
+    ``amount`` is ``None`` when the customer enters it. The link is valid for
+    1 hour.
+    """
+
+    message: str
+    checkoutUrl: str
+    customerPhone: str
+    amount: Optional[str]
+    currencyCode: str
+
+
 class Transaction(TypedDict):
     """A transaction as returned by retrieve and list."""
 
@@ -127,6 +160,26 @@ class VerifiedPayment(TypedDict):
     createdAt: str
 
 
+class Receipt(TypedDict):
+    """Response of ``GET /v1/transactions/:reference/receipt``.
+
+    ``status`` is terminal: ``completed``, ``failed``, or ``cancelled``.
+    ``paidAt`` is ``None`` for failed and cancelled transactions.
+    """
+
+    reference: str
+    merchantReference: Optional[str]
+    status: TransactionStatus
+    amount: str
+    chargeAmount: str
+    feeAmount: Optional[str]
+    currencyCode: Optional[str]
+    paymentMethod: Optional[str]
+    customer: TransactionCustomer
+    paidAt: Optional[str]
+    createdAt: str
+
+
 class TransactionListResponse(TypedDict):
     """Raw body of ``GET /v1/transactions``. Page size is fixed at 10."""
 
@@ -159,17 +212,40 @@ class PaymentProviderItem(TypedDict):
     flowCode: str
 
 
+class PaymentProviderFlow(TypedDict):
+    """A payment flow a provider supports.
+
+    Pass ``flowCode`` to a direct payment. ``isDefault`` marks the flow to
+    pre-select, and ``supportsDirectPayment`` the flows a direct payment accepts.
+    """
+
+    flowCode: str
+    isDefault: bool
+    supportsDirectPayment: bool
+
+
 class PaymentProvider(TypedDict):
-    """Full provider entry from ``GET /v1/payment-providers``."""
+    """Provider entry from ``GET /v1/payment-providers``, with its flows grouped.
+
+    Pass ``providerCode`` as ``psp_code`` to a direct payment.
+    """
 
     providerCode: str
     providerName: Optional[str]
     providerCategory: Optional[str]
-    flowCode: str
-    isEnabled: bool
+    flows: List[PaymentProviderFlow]
 
 
-class WebhookEvent(TypedDict):
+class _WebhookEventExtras(TypedDict, total=False):
+    """Fields present only on some events, such as direct payments."""
+
+    customerPhone: str
+    pspCode: str
+    occurredAt: str
+    reason: str
+
+
+class WebhookEvent(_WebhookEventExtras):
     """Payload delivered to your webhook endpoint.
 
     Note the currency field is ``currency`` here, not ``currencyCode`` as on the

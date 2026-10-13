@@ -373,36 +373,53 @@ def test_providers_are_unwrapped_from_the_envelope(client_factory):
     assert providers[0]["providerCode"] == "telebirr"
 
 
-def test_list_enabled_filters_out_disabled_providers(client_factory):
-    epay, calls = client_factory(
-        [
-            {
-                "json": {
-                    "data": [
-                        {
-                            "providerCode": "cbe_birr",
-                            "providerName": "CBE Birr",
-                            "providerCategory": "bank",
-                            "flowCode": "mobile_banking",
-                            "isEnabled": True,
-                        },
-                        {
-                            "providerCode": "awash_bank",
-                            "providerName": "Awash Bank",
-                            "providerCategory": "bank",
-                            "flowCode": "mobile_banking",
-                            "isEnabled": False,
-                        },
-                    ]
-                }
-            }
-        ]
-    )
+PROVIDERS = {
+    "data": [
+        {
+            "providerCode": "TELEBIRR",
+            "providerName": "TeleBirr",
+            "providerCategory": "wallet",
+            "flows": [
+                {"flowCode": "USSD", "isDefault": True, "supportsDirectPayment": True},
+                {"flowCode": "SMS_OTP", "isDefault": False, "supportsDirectPayment": False},
+            ],
+        },
+        {
+            "providerCode": "CBE",
+            "providerName": "CBE",
+            "providerCategory": "bank",
+            "flows": [{"flowCode": "QR", "isDefault": True, "supportsDirectPayment": False}],
+        },
+    ]
+}
 
-    enabled = epay.payment_providers.list_enabled()
+
+def test_get_all_returns_providers_with_grouped_flows(client_factory):
+    epay, calls = client_factory([{"json": PROVIDERS}])
+
+    providers = epay.payment_providers.get_all()
 
     assert str(calls.url()) == "https://api.epayethiopia.com/v1/payment-providers"
-    assert [p["providerCode"] for p in enabled] == ["cbe_birr"]
+    assert [f["flowCode"] for f in providers[0]["flows"]] == ["USSD", "SMS_OTP"]
+
+
+def test_list_for_direct_payment_keeps_only_direct_flows(client_factory):
+    epay, _ = client_factory([{"json": PROVIDERS}])
+
+    providers = epay.payment_providers.list_for_direct_payment()
+
+    assert [(p["providerCode"], [f["flowCode"] for f in p["flows"]]) for p in providers] == [
+        ("TELEBIRR", ["USSD"])
+    ]
+
+
+def test_list_enabled_is_deprecated_and_returns_every_provider(client_factory):
+    epay, _ = client_factory([{"json": PROVIDERS}])
+
+    with pytest.warns(DeprecationWarning, match="list_enabled"):
+        providers = epay.payment_providers.list_enabled()
+
+    assert [p["providerCode"] for p in providers] == ["TELEBIRR", "CBE"]
 
 
 def test_a_missing_permission_surfaces_as_permission_denied(client_factory):
@@ -426,6 +443,149 @@ def test_a_missing_permission_surfaces_as_permission_denied(client_factory):
 def test_an_empty_provider_envelope_yields_an_empty_list(client_factory):
     epay, _ = client_factory([{"status": 204}])
     assert epay.payment_providers.list() == []
+
+
+# --- direct payment, SMS link, receipt --------------------------------------
+
+DIRECT = {
+    "reference": "A3BX72KP",
+    "status": "pending",
+    "chargeAmount": "250.00",
+    "feeAmount": "5.00",
+    "attempt": {},
+}
+
+
+def test_direct_payment_posts_a_normalized_body_with_an_idempotency_key(client_factory):
+    epay, calls = client_factory([{"json": DIRECT}])
+
+    charge = epay.payments.direct_payment(
+        amount=250,
+        currency_code="etb",
+        customer_phone="0911 234 567",
+        psp_code=" TELEBIRR ",
+        flow_code="USSD",
+        merchant_reference="order_456",
+        idempotency_key="order_456",
+    )
+
+    assert charge == DIRECT
+    assert calls.calls[0].method == "POST"
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/direct"
+    assert calls.header("x-idempotency-key") == "order_456"
+    assert calls.body() == {
+        "amount": "250.00",
+        "currencyCode": "ETB",
+        "customerPhone": "+251911234567",
+        "pspCode": "TELEBIRR",
+        "flowCode": "USSD",
+        "merchantReference": "order_456",
+    }
+
+
+def test_direct_payment_omits_unset_fields_and_generates_a_key(client_factory):
+    epay, calls = client_factory([{"json": DIRECT}])
+
+    epay.payments.direct_payment(
+        amount="10", currency_code="ETB", customer_phone="0911234567", psp_code="AWASH"
+    )
+
+    assert list(calls.body()) == ["amount", "currencyCode", "customerPhone", "pspCode"]
+    assert calls.header("x-idempotency-key")
+
+
+@pytest.mark.parametrize("psp_code", ["", "   "])
+def test_direct_payment_requires_a_provider(client_factory, psp_code):
+    epay, calls = client_factory([])
+
+    with pytest.raises(EpayValidationError, match="psp_code"):
+        epay.payments.direct_payment(
+            amount="10", currency_code="ETB", customer_phone="0911234567", psp_code=psp_code
+        )
+    assert len(calls) == 0
+
+
+def test_direct_payment_retries_with_the_same_key(client_factory):
+    epay, calls = client_factory([{"status": 503, "json": {}}, {"json": DIRECT}], max_retries=1)
+
+    epay.payments.direct_payment(
+        amount="10", currency_code="ETB", customer_phone="0911234567", psp_code="TELEBIRR"
+    )
+
+    assert len(calls) == 2
+    assert calls.header("x-idempotency-key", 0) == calls.header("x-idempotency-key", 1)
+
+
+SMS_LINK = {
+    "message": "Checkout link sent via SMS",
+    "checkoutUrl": "https://api.epayethiopia.com/v1/sms/p/ps_live_abc123?sig=x",
+    "customerPhone": "+251911234567",
+    "amount": "500.00",
+    "currencyCode": "ETB",
+}
+
+
+def test_send_sms_link_posts_a_normalized_body(client_factory):
+    epay, calls = client_factory([{"json": SMS_LINK}])
+
+    link = epay.payments.send_sms_link(customer_phone="0911234567", currency_code="etb", amount=500)
+
+    assert link == SMS_LINK
+    assert str(calls.url()) == "https://api.epayethiopia.com/v1/transactions/sms-link"
+    assert calls.body() == {
+        "customerPhone": "+251911234567",
+        "currencyCode": "ETB",
+        "amount": "500.00",
+    }
+
+
+def test_send_sms_link_leaves_the_amount_to_the_customer(client_factory):
+    epay, calls = client_factory([{"json": {**SMS_LINK, "amount": None}}])
+
+    link = epay.payments.send_sms_link(customer_phone="0911234567", currency_code="ETB")
+
+    assert link["amount"] is None
+    assert "amount" not in calls.body()
+
+
+def test_send_sms_link_is_never_retried(client_factory):
+    epay, calls = client_factory([{"status": 503, "json": {}}], max_retries=2)
+
+    with pytest.raises(EpayServerError):
+        epay.payments.send_sms_link(customer_phone="0911234567", currency_code="ETB")
+    assert len(calls) == 1
+
+
+def test_receipt_returns_any_terminal_transaction(client_factory):
+    failed = {
+        "reference": "A3BX72KP",
+        "merchantReference": "order_456",
+        "status": "failed",
+        "amount": "250.00",
+        "chargeAmount": "250.00",
+        "feeAmount": None,
+        "currencyCode": "ETB",
+        "paymentMethod": "TELEBIRR",
+        "customer": {"name": None, "email": None, "phone": "+251911234567"},
+        "paidAt": None,
+        "createdAt": "2026-10-12T09:10:00.000Z",
+    }
+    epay, calls = client_factory([{"json": failed}])
+
+    receipt = epay.payments.receipt("A3BX72KP")
+
+    assert str(calls.url()).endswith("/transactions/A3BX72KP/receipt")
+    assert receipt["status"] == "failed"
+    assert receipt["paidAt"] is None
+
+
+def test_receipt_reports_a_pending_transaction_as_a_bad_request(client_factory):
+    epay, _ = client_factory(
+        [{"status": 400, "json": {"status": "error", "data": {"message": "pending"}}}]
+    )
+
+    with pytest.raises(EpayBadRequestError):
+        epay.payments.receipt("A3BX72KP")
 
 
 # --- transport behaviour ----------------------------------------------------

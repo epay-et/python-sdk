@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import date, datetime
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Type, Union, cast
@@ -12,10 +13,13 @@ from . import _specs
 from ._config import Config, resolve_config
 from ._transport import RequestSpec, SyncTransport
 from ._types import (
+    DirectPayment,
     EpayMode,
     InitializedPayment,
     PaymentProvider,
     PaymentProviderItem,
+    Receipt,
+    SmsLink,
     Transaction,
     TransactionTimeline,
     VerifiedPayment,
@@ -87,6 +91,96 @@ class Payments:
                 )
             ),
         )
+
+    def direct_payment(
+        self,
+        *,
+        amount: AmountInput,
+        currency_code: str,
+        customer_phone: str,
+        psp_code: str,
+        flow_code: Optional[str] = None,
+        merchant_reference: Optional[str] = None,
+        callback_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> DirectPayment:
+        """Charges a customer's wallet or bank account directly, with no checkout page.
+
+        ePay pushes an authorization prompt (USSD menu, SMS OTP, or in-app
+        notification) to the customer's phone. This returns as soon as the
+        prompt is sent, with ``status`` ``pending``; the outcome arrives as a
+        ``payment.success`` or ``payment.failed`` webhook once the customer acts.
+
+        Choose ``psp_code`` and ``flow_code`` from
+        :meth:`PaymentProviders.list_for_direct_payment`.
+
+        Args:
+            psp_code: The provider to charge through, such as ``TELEBIRR``.
+            flow_code: Overrides the provider's default flow, such as ``USSD``.
+            idempotency_key: Up to 255 characters. Safe to retry: every attempt
+                carries the same key. Pass your order id so a double-submitted
+                form cannot charge twice.
+
+        Raises:
+            EpayValidationError: if a field fails local validation.
+            EpayBadRequestError: ``400`` -- amount, currency, or provider rejected.
+            EpayPermissionDeniedError: ``403`` -- direct payments are not enabled.
+        """
+        return cast(
+            DirectPayment,
+            self._transport.request(
+                _specs.direct_payment_spec(
+                    amount=amount,
+                    currency_code=currency_code,
+                    customer_phone=customer_phone,
+                    psp_code=psp_code,
+                    flow_code=flow_code,
+                    merchant_reference=merchant_reference,
+                    callback_url=callback_url,
+                    idempotency_key=idempotency_key,
+                )
+            ),
+        )
+
+    def send_sms_link(
+        self,
+        *,
+        customer_phone: str,
+        currency_code: str,
+        amount: Optional[AmountInput] = None,
+    ) -> SmsLink:
+        """Texts the customer a signed link to the hosted checkout page.
+
+        With an ``amount``, the amount is signed into the link and cannot be
+        changed; without one, the customer enters it. The link is valid for 1
+        hour. Never retried automatically, so a customer is never texted twice.
+
+        Raises:
+            EpayValidationError: if a field fails local validation.
+            EpayBadRequestError: ``400`` -- phone number or currency rejected.
+        """
+        return cast(
+            SmsLink,
+            self._transport.request(
+                _specs.sms_link_spec(
+                    customer_phone=customer_phone,
+                    currency_code=currency_code,
+                    amount=amount,
+                )
+            ),
+        )
+
+    def receipt(self, reference: str) -> Receipt:
+        """Returns the receipt for a completed, failed, or cancelled transaction.
+
+        Use it for records, audits, and customer-facing receipts. To confirm a
+        payment before fulfilling an order, use :meth:`verify`.
+
+        Raises:
+            EpayBadRequestError: ``400`` -- still pending or processing.
+            EpayNotFoundError: ``404`` -- no such transaction on your account.
+        """
+        return cast(Receipt, self._transport.request(_specs.receipt_spec(reference)))
 
     def verify(self, reference: str) -> VerifiedPayment:
         """Returns the full receipt for a completed transaction.
@@ -203,10 +297,7 @@ class PaymentProviders:
         return response.get("data") or []
 
     def get_all(self) -> List[PaymentProvider]:
-        """Returns every provider with its category and enabled state.
-
-        Disabled providers are included so your UI can show them as unavailable
-        rather than having them silently disappear.
+        """Returns every provider available to the account, with its flows.
 
         Requires the ``get_platform_payment_provider`` permission.
 
@@ -216,9 +307,28 @@ class PaymentProviders:
         response = self._transport.request(_specs.providers_get_all_spec()) or {}
         return response.get("data") or []
 
+    def list_for_direct_payment(self) -> List[PaymentProvider]:
+        """Returns the providers that can take a direct payment.
+
+        Only their direct-payment flows are kept, and providers with none are
+        left out. Pass a provider's ``providerCode`` as ``psp_code``, and
+        pre-select the flow whose ``isDefault`` is true.
+        """
+        return _specs.direct_payment_providers(self.get_all())
+
     def list_enabled(self) -> List[PaymentProvider]:
-        """Returns only the providers the account can currently route through."""
-        return [provider for provider in self.get_all() if provider.get("isEnabled")]
+        """Deprecated: returns the same list as :meth:`get_all`.
+
+        The API no longer reports a per-provider enabled state; every provider
+        it returns is available to the account. This will be removed in a
+        future version.
+        """
+        warnings.warn(
+            "list_enabled() is deprecated; use get_all() or list_for_direct_payment()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_all()
 
 
 class Epay:

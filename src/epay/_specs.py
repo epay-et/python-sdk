@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 from ._transport import RequestSpec
-from ._types import TRANSACTION_STATUSES
+from ._types import TRANSACTION_STATUSES, PaymentProvider
 from .errors import EpayValidationError
 from .helpers import (
     AmountInput,
@@ -24,6 +24,9 @@ from .helpers import (
 
 __all__ = [
     "initialize_spec",
+    "direct_payment_spec",
+    "sms_link_spec",
+    "receipt_spec",
     "verify_spec",
     "cancel_spec",
     "list_transactions_spec",
@@ -62,11 +65,7 @@ def initialize_spec(
     makes the SDK's internal retries safe but does not deduplicate across
     separate calls.
     """
-    key = idempotency_key or f"epay_{uuid.uuid4()}"
-    if len(key) > 255:
-        raise EpayValidationError(
-            f"idempotency_key must be at most 255 characters, received {len(key)}"
-        )
+    key = _resolve_idempotency_key(idempotency_key)
 
     body: Dict[str, Any] = {
         "amount": format_amount(amount),
@@ -96,6 +95,77 @@ def initialize_spec(
         headers={"x-idempotency-key": key},
         # Safe to retry: every attempt carries the same idempotency key.
         retryable=True,
+    )
+
+
+def direct_payment_spec(
+    *,
+    amount: AmountInput,
+    currency_code: str,
+    customer_phone: str,
+    psp_code: str,
+    flow_code: Optional[str] = None,
+    merchant_reference: Optional[str] = None,
+    callback_url: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> RequestSpec:
+    """Builds the ``POST /transactions/direct`` request."""
+    key = _resolve_idempotency_key(idempotency_key)
+
+    body: Dict[str, Any] = {
+        "amount": format_amount(amount),
+        "currencyCode": normalize_currency(currency_code),
+        "customerPhone": normalize_phone(customer_phone),
+        "pspCode": _require_code(psp_code, "psp_code"),
+    }
+    if flow_code is not None:
+        body["flowCode"] = _require_code(flow_code, "flow_code")
+    if merchant_reference is not None:
+        body["merchantReference"] = merchant_reference
+    if callback_url is not None:
+        body["callbackUrl"] = callback_url
+
+    return RequestSpec(
+        method="POST",
+        path="/transactions/direct",
+        json=body,
+        headers={"x-idempotency-key": key},
+        # Safe to retry: every attempt carries the same idempotency key.
+        retryable=True,
+    )
+
+
+def sms_link_spec(
+    *,
+    customer_phone: str,
+    currency_code: str,
+    amount: Optional[AmountInput] = None,
+) -> RequestSpec:
+    """Builds the ``POST /transactions/sms-link`` request."""
+    body: Dict[str, Any] = {
+        "customerPhone": normalize_phone(customer_phone),
+        "currencyCode": normalize_currency(currency_code),
+    }
+    if amount is not None:
+        body["amount"] = format_amount(amount)
+
+    return RequestSpec(
+        method="POST",
+        path="/transactions/sms-link",
+        json=body,
+        # The endpoint takes no idempotency key, so a retry after a lost
+        # response would text the customer a second time.
+        retryable=False,
+    )
+
+
+def receipt_spec(reference: str) -> RequestSpec:
+    """Builds the ``GET /transactions/:reference/receipt`` request."""
+    from urllib.parse import quote
+
+    return RequestSpec(
+        method="GET",
+        path="/transactions/{}/receipt".format(quote(require_reference(reference), safe="")),
     )
 
 
@@ -195,3 +265,31 @@ def providers_list_spec() -> RequestSpec:
 def providers_get_all_spec() -> RequestSpec:
     """Builds the ``GET /payment-providers`` request."""
     return RequestSpec(method="GET", path="/payment-providers")
+
+
+def direct_payment_providers(providers: List[PaymentProvider]) -> List[PaymentProvider]:
+    """Keeps only direct-payment flows, and the providers that have one."""
+    result: List[PaymentProvider] = []
+    for provider in providers:
+        flows = [flow for flow in provider.get("flows") or [] if flow.get("supportsDirectPayment")]
+        if flows:
+            result.append(cast(PaymentProvider, {**provider, "flows": flows}))
+    return result
+
+
+def _resolve_idempotency_key(idempotency_key: Optional[str]) -> str:
+    """Uses the caller's key, or generates one for this call."""
+    key = idempotency_key or f"epay_{uuid.uuid4()}"
+    if len(key) > 255:
+        raise EpayValidationError(
+            f"idempotency_key must be at most 255 characters, received {len(key)}"
+        )
+    return key
+
+
+def _require_code(value: str, field: str) -> str:
+    """Validates a provider or flow code is present, and trims it."""
+    code = value.strip() if isinstance(value, str) else ""
+    if not code:
+        raise EpayValidationError(f"{field} must be a non-empty string")
+    return code

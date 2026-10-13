@@ -6,6 +6,7 @@ sync docstrings for the full argument and error detail.
 
 from __future__ import annotations
 
+import warnings
 from datetime import date, datetime
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Type, Union, cast
@@ -16,10 +17,13 @@ from . import _specs
 from ._config import Config, resolve_config
 from ._transport import AsyncTransport, RequestSpec
 from ._types import (
+    DirectPayment,
     EpayMode,
     InitializedPayment,
     PaymentProvider,
     PaymentProviderItem,
+    Receipt,
+    SmsLink,
     Transaction,
     TransactionTimeline,
     VerifiedPayment,
@@ -74,6 +78,61 @@ class AsyncPayments:
                 )
             ),
         )
+
+    async def direct_payment(
+        self,
+        *,
+        amount: AmountInput,
+        currency_code: str,
+        customer_phone: str,
+        psp_code: str,
+        flow_code: Optional[str] = None,
+        merchant_reference: Optional[str] = None,
+        callback_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> DirectPayment:
+        """Charges a customer directly, with no checkout page.
+
+        Returns with ``status`` ``pending``; the outcome arrives by webhook.
+        """
+        return cast(
+            DirectPayment,
+            await self._transport.request(
+                _specs.direct_payment_spec(
+                    amount=amount,
+                    currency_code=currency_code,
+                    customer_phone=customer_phone,
+                    psp_code=psp_code,
+                    flow_code=flow_code,
+                    merchant_reference=merchant_reference,
+                    callback_url=callback_url,
+                    idempotency_key=idempotency_key,
+                )
+            ),
+        )
+
+    async def send_sms_link(
+        self,
+        *,
+        customer_phone: str,
+        currency_code: str,
+        amount: Optional[AmountInput] = None,
+    ) -> SmsLink:
+        """Texts the customer a signed checkout link. Never retried automatically."""
+        return cast(
+            SmsLink,
+            await self._transport.request(
+                _specs.sms_link_spec(
+                    customer_phone=customer_phone,
+                    currency_code=currency_code,
+                    amount=amount,
+                )
+            ),
+        )
+
+    async def receipt(self, reference: str) -> Receipt:
+        """Returns the receipt for a completed, failed, or cancelled transaction."""
+        return cast(Receipt, await self._transport.request(_specs.receipt_spec(reference)))
 
     async def verify(self, reference: str) -> VerifiedPayment:
         """Returns the full receipt for a completed transaction.
@@ -150,13 +209,22 @@ class AsyncPaymentProviders:
         return response.get("data") or []
 
     async def get_all(self) -> List[PaymentProvider]:
-        """Full provider list. Needs ``get_platform_payment_provider``."""
+        """Every provider, with its flows. Needs ``get_platform_payment_provider``."""
         response = await self._transport.request(_specs.providers_get_all_spec()) or {}
         return response.get("data") or []
 
+    async def list_for_direct_payment(self) -> List[PaymentProvider]:
+        """Providers that can take a direct payment, with only those flows."""
+        return _specs.direct_payment_providers(await self.get_all())
+
     async def list_enabled(self) -> List[PaymentProvider]:
-        """Only the providers the account can currently route through."""
-        return [provider for provider in await self.get_all() if provider.get("isEnabled")]
+        """Deprecated: returns the same list as :meth:`get_all`."""
+        warnings.warn(
+            "list_enabled() is deprecated; use get_all() or list_for_direct_payment()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.get_all()
 
 
 class AsyncEpay:

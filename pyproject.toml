@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "epay"
-version = "0.1.1"
+version = "0.2.0"
 description = "Official ePay Business API client for Python."
 readme = "README.md"
 license = { text = "MIT" }

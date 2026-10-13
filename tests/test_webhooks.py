@@ -137,3 +137,18 @@ def test_client_webhooks_explains_itself_without_a_secret(monkeypatch):
 def test_signing_requires_a_secret():
     with pytest.raises(EpayConfigError):
         sign_webhook_payload(PAYLOAD, "")
+
+
+def test_direct_payment_fields_pass_through():
+    body = json.dumps(
+        {
+            "event": "payment.failed",
+            "reference": "A3BX72KP",
+            "pspCode": "TELEBIRR",
+            "reason": "Customer cancelled",
+        }
+    )
+    event = construct_webhook_event(body, header(body), SECRET)
+
+    assert event["pspCode"] == "TELEBIRR"
+    assert event["reason"] == "Customer cancelled"

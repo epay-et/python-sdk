@@ -148,34 +148,77 @@ async def test_async_next_page_returns_none_on_the_last_page(async_client_factor
     await epay.aclose()
 
 
-async def test_providers_are_unwrapped(async_client_factory):
-    epay, _ = async_client_factory(
+async def test_providers_are_grouped_and_filtered_for_direct_payment(async_client_factory):
+    providers = {
+        "data": [
+            {
+                "providerCode": "TELEBIRR",
+                "providerName": "TeleBirr",
+                "providerCategory": "wallet",
+                "flows": [
+                    {"flowCode": "USSD", "isDefault": True, "supportsDirectPayment": True},
+                    {"flowCode": "SMS_OTP", "isDefault": False, "supportsDirectPayment": False},
+                ],
+            },
+            {
+                "providerCode": "CBE",
+                "providerName": "CBE",
+                "providerCategory": "bank",
+                "flows": [{"flowCode": "QR", "isDefault": True, "supportsDirectPayment": False}],
+            },
+        ]
+    }
+    epay, _ = async_client_factory([{"json": providers}, {"json": providers}])
+
+    assert len(await epay.payment_providers.get_all()) == 2
+    direct = await epay.payment_providers.list_for_direct_payment()
+    assert [(p["providerCode"], [f["flowCode"] for f in p["flows"]]) for p in direct] == [
+        ("TELEBIRR", ["USSD"])
+    ]
+    await epay.aclose()
+
+
+async def test_direct_payment_sms_link_and_receipt(async_client_factory):
+    epay, calls = async_client_factory(
         [
             {
                 "json": {
-                    "data": [
-                        {
-                            "providerCode": "telebirr",
-                            "providerName": "Telebirr",
-                            "providerCategory": "mobile_money",
-                            "flowCode": "ussd",
-                            "isEnabled": True,
-                        },
-                        {
-                            "providerCode": "awash_bank",
-                            "providerName": "Awash",
-                            "providerCategory": "bank",
-                            "flowCode": "mobile_banking",
-                            "isEnabled": False,
-                        },
-                    ]
+                    "reference": "A3BX72KP",
+                    "status": "pending",
+                    "chargeAmount": "10.00",
+                    "feeAmount": "0.20",
+                    "attempt": {},
                 }
-            }
+            },
+            {
+                "json": {
+                    "message": "sent",
+                    "checkoutUrl": "https://x",
+                    "customerPhone": "+251911234567",
+                    "amount": None,
+                    "currencyCode": "ETB",
+                }
+            },
+            {"json": {"reference": "A3BX72KP", "status": "cancelled"}},
         ]
     )
 
-    enabled = await epay.payment_providers.list_enabled()
-    assert [p["providerCode"] for p in enabled] == ["telebirr"]
+    charge = await epay.payments.direct_payment(
+        amount="10",
+        currency_code="ETB",
+        customer_phone="0911234567",
+        psp_code="TELEBIRR",
+        idempotency_key="order_1",
+    )
+    link = await epay.payments.send_sms_link(customer_phone="0911234567", currency_code="ETB")
+    receipt = await epay.payments.receipt("A3BX72KP")
+
+    assert charge["status"] == "pending"
+    assert calls.header("x-idempotency-key", 0) == "order_1"
+    assert str(calls.url(1)).endswith("/transactions/sms-link")
+    assert link["amount"] is None
+    assert str(calls.url(2)).endswith("/transactions/A3BX72KP/receipt")
+    assert receipt["status"] == "cancelled"
     await epay.aclose()
 
 
