@@ -75,7 +75,7 @@ def epay_webhook(
                 request = request_getter()
             else:
                 # Imported lazily, so Flask is only needed when this runs.
-                from flask import request as flask_request  # type: ignore[import-not-found]
+                from flask import request as flask_request  # type: ignore[import-not-found,unused-ignore]
 
                 request = flask_request
 
